@@ -123,7 +123,7 @@ $httpd->on(request => sub {
                 my $tts = time_til_served($tx->remote_address);
 
                 # if we're in timeout, or if we're accessing expired content, let's penalize
-                if ($md->{feed} || $tts || (exists $md->{expiration_time} && time > $md->{expiration_time})) {
+                if ($md->{feed} || $tts || (exists $md->{expiration_time} && time > $md->{expiration_time}) || (exists $md->{views_allowed} && $md->{views_allowed} < 1)) {
                     register_failure($tx->remote_address);
                     my $tts = time_til_served($tx->remote_address);
                     $tx->res->code(200);
@@ -131,7 +131,7 @@ $httpd->on(request => sub {
                     $tx->res->body("[bad]: beeeeeeeeeeep.  errrrrrrrrrrt.  penalty. ($tts)");
 
                     # fixup, cleanup!
-                    if (exists $md->{expiration_time} && time > $md->{expiration_time}) {
+                    if (exists $md->{expiration_time} && time > $md->{expiration_time} || (exists $md->{views_allowed} && $md->{views_allowed} < 1)) {
                         unlink("things/$rname.dat");
                         unlink("things/$rname");
                     }
@@ -170,6 +170,8 @@ $httpd->on(request => sub {
                     $tx->res->parse($buff);
                     warn "Done parsing HTTP Response content.\n" if $DEBUG;
                     close(PATTFILE);
+                    $md->{views_allowed}--;
+                    serialize_and_write($md, "things/$rname.dat", $cipher);
                 }
             } else {
                 register_failure($tx->remote_address);
@@ -264,6 +266,11 @@ $httpd->on(request => sub {
                     $md->{protect_until} = now_plus_denom($protect_for);
                 }
 
+                # this is how many views we allow
+                if (my $views_allowed = $req->param('views_allowed')) {
+                    $md->{views_allowed} = $views_allowed;
+                }
+
                 serialize_and_write($md, "things/$rname.dat", $cipher);
             } elsif (!$md->{feed} && $md->{protect_until} < time && $req->param('v')) {
                 my $v = $req->param('v');
@@ -288,6 +295,10 @@ $httpd->on(request => sub {
 
                 if (my $protect_for = $req->param('protect_for')) {
                     $md->{protect_until} = now_plus_denom($protect_for);
+                }
+
+                if (my $views_allowed = $req->param('views_allowed')) {
+                    $md->{views_allowed} = $views_allowed;
                 }
 
                 serialize_and_write($md, "things/$rname.dat", $cipher);
@@ -527,3 +538,7 @@ sub serialize_and_write {
     close(WFILE);
 }
 
+END {
+   #warn "END!";
+   serialize_and_write($state, "patt.dat");
+}
